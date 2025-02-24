@@ -1,0 +1,7 @@
+The following are the technologies used in this project:
+
+- Bun for the package manager
+- Vitest for testing
+- Tailwind for styling
+
+- To run the tests, run `bun run test` in the terminal.
