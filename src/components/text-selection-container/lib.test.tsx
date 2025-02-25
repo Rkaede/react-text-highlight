@@ -1,7 +1,7 @@
-import { describe, test, expect, beforeEach } from 'vitest';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import { Content } from '../content';
-import { applyStoredHighlights } from './lib';
+import { applyStoredHighlights, createHighlightFromSelection } from './lib';
 
 describe('applyStoredHighlights', () => {
   const containerId = 'test-container';
@@ -143,5 +143,127 @@ describe('applyStoredHighlights', () => {
     highlightedSpans.forEach((span) => {
       expect((span as HTMLElement).style.backgroundColor).toBe('yellow');
     });
+  });
+});
+
+describe('createHighlightFromSelection', () => {
+  const containerId = 'test-container';
+
+  beforeEach(() => {
+    // Clean up any previous test DOM
+    document.body.innerHTML = '';
+
+    // Render the Content component
+    render(<Content id={containerId} />);
+  });
+
+  test('should return null when no selection exists', () => {
+    // Mock an empty selection
+    const mockGetSelection = vi.fn().mockReturnValue({
+      rangeCount: 0,
+    });
+
+    // Save the original getSelection
+    const originalGetSelection = window.getSelection;
+    // Replace with our mock
+    window.getSelection = mockGetSelection;
+
+    try {
+      const result = createHighlightFromSelection(containerId);
+      expect(result).toBeNull();
+    } finally {
+      // Restore original getSelection
+      window.getSelection = originalGetSelection;
+    }
+  });
+
+  test('should return null when selection is outside the container', () => {
+    // Create a div outside our container
+    const outsideDiv = document.createElement('div');
+    outsideDiv.textContent = 'Outside text';
+    document.body.appendChild(outsideDiv);
+
+    // Create a range in the outside div
+    const range = document.createRange();
+    range.selectNodeContents(outsideDiv);
+
+    // Mock a selection with this range
+    const mockGetSelection = vi.fn().mockReturnValue({
+      rangeCount: 1,
+      getRangeAt: vi.fn().mockReturnValue(range),
+      removeAllRanges: vi.fn(),
+    });
+
+    // Save the original getSelection
+    const originalGetSelection = window.getSelection;
+    // Replace with our mock
+    window.getSelection = mockGetSelection;
+
+    try {
+      const result = createHighlightFromSelection(containerId);
+      expect(result).toBeNull();
+    } finally {
+      // Restore original getSelection
+      window.getSelection = originalGetSelection;
+    }
+  });
+
+  test('should create a highlight from valid selection', () => {
+    // Get the container
+    const container = document.getElementById(containerId);
+    expect(container).not.toBeNull();
+
+    // Find a text node to select
+    const textNode = Array.from(container!.querySelectorAll('*')).find((el) =>
+      el.textContent?.includes('Sample Content')
+    )?.firstChild;
+    expect(textNode).not.toBeNull();
+
+    // Create a range for this text
+    const range = document.createRange();
+    range.setStart(textNode!, 0);
+    range.setEnd(textNode!, 6); // Select "Sample"
+
+    // Mock selection
+    const mockRemoveAllRanges = vi.fn();
+    const mockGetSelection = vi.fn().mockReturnValue({
+      rangeCount: 1,
+      getRangeAt: vi.fn().mockReturnValue(range),
+      removeAllRanges: mockRemoveAllRanges,
+    });
+
+    // Mock UUID generation for deterministic testing
+    const mockGenerateId = vi.fn().mockReturnValue('test-id-123');
+
+    // Save original
+    const originalGetSelection = window.getSelection;
+    // Replace with mock
+    window.getSelection = mockGetSelection;
+
+    try {
+      const result = createHighlightFromSelection(
+        containerId,
+        'yellow',
+        mockGenerateId
+      );
+
+      // Check the highlight was created correctly
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe('test-id-123');
+      expect(result?.color).toBe('yellow');
+
+      // Verify selection was cleared
+      expect(mockRemoveAllRanges).toHaveBeenCalled();
+
+      // Check for the highlight in the DOM
+      const highlightSpan = container!.querySelector(
+        'span[data-highlight-id="test-id-123"]'
+      );
+      expect(highlightSpan).toBeTruthy();
+      expect(highlightSpan?.textContent).toBe('Sample');
+    } finally {
+      // Restore original
+      window.getSelection = originalGetSelection;
+    }
   });
 });

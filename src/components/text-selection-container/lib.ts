@@ -5,6 +5,165 @@ export type Highlight = {
   color: string;
 };
 
+/**
+ * Calculates the text offset of a node within a root element
+ */
+export function getTextNodeOffset(
+  root: Node,
+  node: Node,
+  offset: number
+): number {
+  // If the node is not a text node, we need special handling
+  if (node.nodeType !== Node.TEXT_NODE) {
+    // If it's an element node, get the appropriate text node based on offset
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const elem = node as Element;
+
+      // If offset points to a child, use that child
+      if (elem.childNodes.length > 0) {
+        if (offset < elem.childNodes.length) {
+          const childNode = elem.childNodes[offset];
+
+          // If the child is a text node, use it
+          if (childNode.nodeType === Node.TEXT_NODE) {
+            return getTextNodeOffset(root, childNode, 0);
+          }
+          // If it's an element, get its first text node
+          else if (childNode.nodeType === Node.ELEMENT_NODE) {
+            const walker = document.createTreeWalker(
+              childNode,
+              NodeFilter.SHOW_TEXT
+            );
+            const firstTextNode = walker.nextNode();
+            if (firstTextNode) {
+              return getTextNodeOffset(root, firstTextNode, 0);
+            }
+          }
+        }
+        // If offset is at the end, get the last text node in the element
+        else if (offset === elem.childNodes.length) {
+          const walker = document.createTreeWalker(elem, NodeFilter.SHOW_TEXT);
+          let lastTextNode = null;
+          let currentNode = walker.nextNode();
+          while (currentNode) {
+            lastTextNode = currentNode;
+            currentNode = walker.nextNode();
+          }
+          if (lastTextNode) {
+            return getTextNodeOffset(
+              root,
+              lastTextNode,
+              (lastTextNode as Text).length
+            );
+          }
+        }
+      }
+    }
+  }
+
+  // Original code for text nodes
+  let totalOffset = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let currentNode = walker.nextNode();
+
+  while (currentNode) {
+    if (currentNode === node) {
+      return totalOffset + offset;
+    }
+    totalOffset += (currentNode as Text).length;
+    currentNode = walker.nextNode();
+  }
+
+  // If we couldn't find the node, rather than returning the total length
+  // we should return the last known good position
+  console.warn(
+    'Could not find exact node in getTextNodeOffset, using approximate position'
+  );
+  return totalOffset;
+}
+
+/**
+ * Removes existing highlight spans that overlap with the provided range
+ */
+export function removeOverlappingHighlights(
+  container: HTMLElement,
+  range: Range
+): void {
+  // Find highlight spans that overlap with the selection range
+  const highlightSpans = Array.from(container.getElementsByTagName('span'))
+    .filter((span) => span.dataset.highlightId)
+    .filter((span) => {
+      const spanRange = document.createRange();
+      spanRange.selectNode(span);
+      return (
+        range.compareBoundaryPoints(Range.START_TO_END, spanRange) <= 0 &&
+        range.compareBoundaryPoints(Range.END_TO_START, spanRange) >= 0
+      );
+    });
+
+  // Remove the overlapping highlights from the DOM
+  highlightSpans.forEach((span) => {
+    const parent = span.parentNode;
+    if (!parent) return;
+    while (span.firstChild) {
+      parent.insertBefore(span.firstChild, span);
+    }
+    parent.removeChild(span);
+  });
+}
+
+/**
+ * Creates a highlight from the current selection
+ * @param containerId ID of the container element
+ * @param color Color for the highlight
+ * @param generateId Function to generate a unique ID for the highlight
+ * @returns The created highlight or null if selection is invalid
+ */
+export function createHighlightFromSelection(
+  containerId: string,
+  color: string = 'yellow',
+  generateId: () => string = () => window.crypto.randomUUID()
+): Highlight | null {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return null;
+
+  const range = selection.getRangeAt(0);
+  const container = document.getElementById(containerId);
+
+  if (!container?.contains(range.commonAncestorContainer)) {
+    return null;
+  }
+
+  // Remove any existing highlights in the selected range
+  removeOverlappingHighlights(container, range);
+
+  // Create the new highlight
+  const highlightId = generateId();
+
+  const highlight = {
+    id: highlightId,
+    start: getTextNodeOffset(
+      container,
+      range.startContainer,
+      range.startOffset
+    ),
+    end: getTextNodeOffset(container, range.endContainer, range.endOffset),
+    color,
+  };
+
+  // Don't create highlight if start and end are the same (just a click)
+  if (highlight.start === highlight.end) {
+    selection.removeAllRanges();
+    return null;
+  }
+
+  // Apply the highlight to the DOM
+  applyHighlight(range, color, highlightId);
+  selection.removeAllRanges();
+
+  return highlight;
+}
+
 export function applyHighlight(range: Range, color: string, id: string) {
   // if the range is entirely within one element and doesn't contain any highlights
   if (range.startContainer === range.endContainer) {
@@ -102,10 +261,10 @@ export function applyHighlight(range: Range, color: string, id: string) {
   return spans;
 }
 
-export const applyStoredHighlights = (
+export function applyStoredHighlights(
   highlights: Highlight[],
   containerId: string
-) => {
+) {
   const container = document.getElementById(containerId);
   if (!container) return;
 
@@ -174,4 +333,4 @@ export const applyStoredHighlights = (
       applyHighlight(range, highlight.color, highlight.id);
     }
   });
-};
+}
